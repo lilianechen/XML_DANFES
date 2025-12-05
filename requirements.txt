@@ -3,4 +3,3 @@ pdfplumber
 pytesseract
 pillow
 lxml
-python-dotenv
