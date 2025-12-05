@@ -4,30 +4,46 @@ import io
 import re
 import xml.etree.ElementTree as ET
 import pdfplumber
-from PIL import Image
 import pytesseract
 
-st.set_page_config(page_title="Filtro de NFs", page_icon="📦")
+st.set_page_config(page_title="Filtro por Pedido", page_icon="📦")
 
-st.title("📦 Filtro Automático de Notas Fiscais (XML + DANFE PDF)")
+st.title("📦 Filtro Automático de XML + DANFE por Número de Pedido (xPed)")
 
 st.write("""
 Envie dois arquivos ZIP:
-- Um contendo **XMLs de NF-e**
-- Outro contendo **DANFEs em PDF**
-- Informe o intervalo de nota fiscal que deseja filtrar  
-O sistema criará um **novo ZIP filtrado** contendo apenas as NF dentro do intervalo informado.
+- Um contendo os **XMLs da NF-e**
+- Outro contendo as **DANFEs em PDF**
+
+Informe o **número do pedido (xPed)** e o sistema irá:
+1. Encontrar todos os XMLs vinculados ao pedido
+2. Identificar todas as NF-es relacionadas
+3. Determinar automaticamente quais notas estão **autorizadas** ou **canceladas**
+4. Filtrar as DANFEs correspondentes
+5. Gerar um **ZIP final**
+6. Criar um **relatório completo**
 """)
 
-# Uploads
 xml_zip_file = st.file_uploader("📄 Envie o ZIP contendo XMLs", type="zip")
 danfe_zip_file = st.file_uploader("📑 Envie o ZIP contendo DANFEs (PDF)", type="zip")
 
-nf_inicio = st.number_input("NF Inicial", min_value=0, step=1)
-nf_fim = st.number_input("NF Final", min_value=0, step=1)
+pedido_desejado = st.text_input("Digite o número do pedido (xPed):")
 
 # ---------------------------------------------------------
-# FUNÇÃO PARA PEGAR NF DO XML LENDO TAG <nNF>
+# Função para ler o pedido (xPed) dentro do XML
+# ---------------------------------------------------------
+def get_pedido_from_xml(content):
+    try:
+        root = ET.fromstring(content)
+        xPed = root.find('.//{*}xPed')
+        if xPed is not None:
+            return xPed.text.strip()
+    except:
+        return None
+    return None
+
+# ---------------------------------------------------------
+# Extrair número da NF dentro do XML
 # ---------------------------------------------------------
 def get_nf_from_xml(content):
     try:
@@ -40,112 +56,112 @@ def get_nf_from_xml(content):
     return None
 
 # ---------------------------------------------------------
-# PEGAR NF PELO NOME DO ARQUIVO DANFE
-# Formato: NFe_001-000000106.pdf → NF = 106
+# Extrai número da NF do nome do arquivo PDF
 # ---------------------------------------------------------
 def get_nf_from_filename(filename):
-    match = re.findall(r"\d+", filename)
-    if match:
-        return int(match[-1])  # o último número geralmente é o da NF
+    nums = re.findall(r"\d+", filename)
+    if nums:
+        return int(nums[-1])
     return None
 
 # ---------------------------------------------------------
-# OCR PARA DANFE (CASO nome falhe)
-# Procura padrões como: "Nº 106", "Nota Fiscal 106"
+# Identifica cancelamento pelo nome do XML
 # ---------------------------------------------------------
-def get_nf_from_pdf(pdf_bytes):
-    # Tentar extrair texto do PDF
-    try:
-        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            text = ""
-            for page in pdf.pages:
-                page_text = page.extract_text() or ""
-                text += page_text
-
-        patterns = [
-            r"Nota Fiscal\s*No?\s*(\d+)",
-            r"N\.?F\.?\s*(\d+)",
-            r"NF\s*(\d+)",
-            r"Nº\s*(\d+)",
-            r"No\s*(\d+)"
-        ]
-
-        for p in patterns:
-            match = re.search(p, text, re.IGNORECASE)
-            if match:
-                return int(match.group(1))
-
-    except:
-        pass
-
-    # Se falhar, tentar OCR (para PDFs em imagem)
-    try:
-        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            for page in pdf.pages:
-                img = page.to_image(resolution=200).original
-                ocr_text = pytesseract.image_to_string(img, lang="por")
-                match = re.search(r"\bNF\s*(\d+)\b", ocr_text)
-                if match:
-                    return int(match.group(1))
-    except:
-        pass
-
-    return None
-
+def is_xml_cancelado(filename):
+    return "cancel" in filename.lower()
 
 # ---------------------------------------------------------
 # PROCESSAMENTO PRINCIPAL
 # ---------------------------------------------------------
 if st.button("🔍 Filtrar e Gerar ZIP"):
     if not xml_zip_file or not danfe_zip_file:
-        st.error("Envie os dois arquivos ZIP.")
+        st.error("Envie ambos os arquivos ZIP antes de continuar.")
         st.stop()
 
-    if nf_inicio > nf_fim:
-        st.error("NF Inicial não pode ser maior que NF Final.")
+    if not pedido_desejado.strip():
+        st.error("Digite o número do pedido (xPed).")
         st.stop()
 
     xml_zip = zipfile.ZipFile(xml_zip_file)
     danfe_zip = zipfile.ZipFile(danfe_zip_file)
 
+    # Agrupar XMLs encontrados pelo número do pedido
+    xmls_encontrados = []
+    notas_por_xml = {}
+
+    for name in xml_zip.namelist():
+        if not name.lower().endswith(".xml"):
+            continue
+
+        content = xml_zip.read(name)
+        pedido_xml = get_pedido_from_xml(content)
+
+        if pedido_xml == pedido_desejado:
+            xmls_encontrados.append(name)
+
+            nf = get_nf_from_xml(content)
+            if nf:
+                notas_por_xml.setdefault(nf, []).append(name)
+
+    if not xmls_encontrados:
+        st.warning("Nenhum XML com este pedido foi encontrado.")
+        st.stop()
+
+    st.success(f"XMLs encontrados para o pedido {pedido_desejado}: {len(xmls_encontrados)}")
+
+    # Determinar status das notas (autorizada/cancelada)
+    notas_status = {}
+    canceladas = []
+    autorizadas = []
+
+    for nf, arquivos in notas_por_xml.items():
+        # Se existir arquivo com "-cancelado" → nota cancelada
+        if any(is_xml_cancelado(a) for a in arquivos):
+            notas_status[nf] = "cancelada"
+            canceladas.append(nf)
+        else:
+            notas_status[nf] = "autorizada"
+            autorizadas.append(nf)
+
+    # Criar ZIP final
     output_zip_buffer = io.BytesIO()
 
     with zipfile.ZipFile(output_zip_buffer, "w", zipfile.ZIP_DEFLATED) as new_zip:
 
-        st.subheader("🧾 XMLs filtrados:")
+        # Inserir apenas os XMLs relevantes
+        for nf, arquivos in notas_por_xml.items():
+            for xml_name in arquivos:
+                xml_bytes = xml_zip.read(xml_name)
+                new_zip.writestr(f"XMLs/{xml_name}", xml_bytes)
 
-        for name in xml_zip.namelist():
-            content = xml_zip.read(name)
-            nf = get_nf_from_xml(content)
-
-            if nf and nf_inicio <= nf <= nf_fim:
-                st.write(f"✔ XML {name} → NF {nf}")
-                new_zip.writestr(f"XMLs/{name}", content)
-
-        st.subheader("📑 DANFEs filtradas:")
-
+        # Filtrar DANFEs por NF
         for name in danfe_zip.namelist():
             if not name.lower().endswith(".pdf"):
                 continue
 
-            file_bytes = danfe_zip.read(name)
+            nf_pdf = get_nf_from_filename(name)
 
-            # 1) Tentar pelo nome
-            nf = get_nf_from_filename(name)
+            if nf_pdf in notas_status:
+                pdf_bytes = danfe_zip.read(name)
+                new_zip.writestr(f"DANFEs/{name}", pdf_bytes)
 
-            # 2) Se falhar, tentar OCR
-            if not nf:
-                nf = get_nf_from_pdf(file_bytes)
+        # Adicionar relatório
+        relatorio = "RELATÓRIO DO PROCESSAMENTO\n\n"
+        relatorio += f"Pedido analisado: {pedido_desejado}\n"
+        relatorio += f"Total de notas encontradas: {len(notas_status)}\n"
+        relatorio += f"Notas autorizadas: {len(autorizadas)} -> {autorizadas}\n"
+        relatorio += f"Notas canceladas: {len(canceladas)} -> {canceladas}\n"
 
-            if nf and nf_inicio <= nf <= nf_fim:
-                st.write(f"✔ DANFE {name} → NF {nf}")
-                new_zip.writestr(f"DANFEs/{name}", file_bytes)
+        new_zip.writestr("relatorio.txt", relatorio)
 
-    st.success("Processo concluído com sucesso!")
+    st.success("Processo concluído!")
 
     st.download_button(
         label="⬇ Baixar ZIP Filtrado",
         data=output_zip_buffer.getvalue(),
-        file_name="NFs_filtradas.zip",
+        file_name=f"Pedido_{pedido_desejado}_filtrado.zip",
         mime="application/zip"
     )
+
+    st.write("### Resultado:")
+    st.write(relatorio.replace("\n", "<br>"), unsafe_allow_html=True)
