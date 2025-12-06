@@ -6,23 +6,14 @@ import xml.etree.ElementTree as ET
 import pdfplumber
 import pytesseract
 
-st.set_page_config(page_title="Filtro por Pedido", page_icon="📦")
+st.set_page_config(page_title="Filtro por Pedido (Definitivo)", page_icon="📦")
 
-st.title("📦 Filtro Automático de XML + DANFE por Número de Pedido (xPed)")
+st.title("📦 Filtro Automático DEFINITIVO de XML + DANFE por Número de Pedido (xPed)")
 
 st.write("""
-Envie dois arquivos ZIP:
-- Um contendo os **XMLs da NF-e**
-- Outro contendo as **DANFEs em PDF**
+Sistema atualizado com detecção **CORRETA e DEFINITIVA** de notas canceladas.
 
-Digite o **número do pedido (4 ou 5 dígitos)**.
-
-O sistema irá:
-1. Encontrar todos os XMLs vinculados ao pedido (campo xPed)
-2. Identificar todas as NF-es relacionadas
-3. Detectar automaticamente XMLs **cancelados**
-4. Filtrar as DANFEs correspondentes
-5. Gerar um **ZIP final com XMLs, DANFEs e relatório**
+Agora o cancelamento é identificado pelo **conteúdo do XML**, independentemente do nome do arquivo.
 """)
 
 xml_zip_file = st.file_uploader("📄 Envie o ZIP contendo XMLs", type="zip")
@@ -32,7 +23,7 @@ pedido_usuario = st.text_input("Digite o número do pedido (4 ou 5 dígitos):")
 
 
 # ---------------------------------------------------------
-# Extrair o pedido real do XML: primeiros 4 ou 5 dígitos
+# Extrair o pedido real (4 ou 5 dígitos)
 # ---------------------------------------------------------
 def get_pedido_from_xml(content):
     try:
@@ -41,20 +32,20 @@ def get_pedido_from_xml(content):
         if xPed_node is None:
             return None
 
-        raw_value = xPed_node.text.strip()
+        raw = xPed_node.text.strip()
 
-        # Pega somente os dígitos iniciais
-        match = re.match(r"(\d+)", raw_value)
+        # pegar somente os dígitos iniciais
+        match = re.match(r"(\d+)", raw)
         if not match:
             return None
 
         bloco = match.group(1)
 
-        # Se bloco tiver 4 ou 5 dígitos → OK
+        # se o bloco tiver 4 ou 5 dígitos → OK
         if len(bloco) in (4, 5):
             return bloco
 
-        # Se tiver mais dígitos (caso raro), pegar só os primeiros 5
+        # se vier maior, pegar os primeiros 5
         return bloco[:5]
 
     except:
@@ -67,16 +58,54 @@ def get_pedido_from_xml(content):
 def get_nf_from_xml(content):
     try:
         root = ET.fromstring(content)
-        nNF = root.find('.//{*}nNF')
-        if nNF is not None and nNF.text.isdigit():
-            return int(nNF.text)
+        node = root.find('.//{*}nNF')
+        if node is not None and node.text.isdigit():
+            return int(node.text)
     except:
         return None
     return None
 
 
 # ---------------------------------------------------------
-# Extrair NF do nome do PDF
+# EXTRATOR DEFINITIVO DE CANCELAMENTO — PELO CONTEÚDO
+# ---------------------------------------------------------
+def xml_esta_cancelado(content):
+
+    try:
+        root = ET.fromstring(content)
+
+        # 1️⃣ Evento de cancelamento
+        tpEvento = root.find('.//{*}tpEvento')
+        if tpEvento is not None and tpEvento.text.strip() == "110111":
+            return True
+
+        # 2️⃣ Estrutura de evento de cancelamento
+        if root.find('.//{*}procEventoNFe') is not None:
+            return True
+
+        # 3️⃣ cStat 101 = cancelado
+        cStat = root.find('.//{*}cStat')
+        if cStat is not None and cStat.text.strip() == "101":
+            return True
+
+        # 4️⃣ descrição do evento
+        desc = root.find('.//{*}descEvento')
+        if desc is not None and "cancel" in desc.text.lower():
+            return True
+
+        # 5️⃣ xMotivo contendo cancelamento
+        xMotivo = root.find('.//{*}xMotivo')
+        if xMotivo is not None and "cancel" in xMotivo.text.lower():
+            return True
+
+    except:
+        return False
+
+    return False
+
+
+# ---------------------------------------------------------
+# Extrair NF do PDF pelo nome
 # ---------------------------------------------------------
 def get_nf_from_filename(filename):
     nums = re.findall(r"\d+", filename)
@@ -86,18 +115,12 @@ def get_nf_from_filename(filename):
 
 
 # ---------------------------------------------------------
-# Verifica se um XML é cancelado pelo nome do arquivo
-# ---------------------------------------------------------
-def is_xml_cancelado(filename):
-    return "cancel" in filename.lower()
-
-
-# ---------------------------------------------------------
 # PROCESSAMENTO PRINCIPAL
 # ---------------------------------------------------------
 if st.button("🔍 Processar Pedido"):
+    
     if not xml_zip_file or not danfe_zip_file:
-        st.error("Envie ambos os arquivos ZIP.")
+        st.error("Envie os dois arquivos ZIP.")
         st.stop()
 
     if not pedido_usuario.strip():
@@ -107,12 +130,12 @@ if st.button("🔍 Processar Pedido"):
     xml_zip = zipfile.ZipFile(xml_zip_file)
     danfe_zip = zipfile.ZipFile(danfe_zip_file)
 
-    xmls_do_pedido = []
-    notas_xml = {}
+    xmls_pedido = []
+    notas_dict = {}
 
-    # -----------------------------
-    # Filtrar XMLs pelo pedido
-    # -----------------------------
+    # -------------------------------
+    # 1️⃣ Encontrar XMLs do pedido
+    # -------------------------------
     for name in xml_zip.namelist():
         if not name.lower().endswith(".xml"):
             continue
@@ -120,72 +143,66 @@ if st.button("🔍 Processar Pedido"):
         content = xml_zip.read(name)
         pedido_xml = get_pedido_from_xml(content)
 
-        if pedido_xml and pedido_xml == pedido_usuario:
-            xmls_do_pedido.append(name)
+        if pedido_xml == pedido_usuario:
+            xmls_pedido.append(name)
 
             nf = get_nf_from_xml(content)
             if nf:
-                notas_xml.setdefault(nf, []).append(name)
+                notas_dict.setdefault(nf, []).append(name)
 
-    if not xmls_do_pedido:
+    if not xmls_pedido:
         st.warning("Nenhum XML encontrado para esse pedido.")
         st.stop()
 
-    st.success(f"XMLs encontrados para o pedido {pedido_usuario}: {len(xmls_do_pedido)}")
-
-
-    # -----------------------------
-    # Determinar status das notas
-    # -----------------------------
+    # -------------------------------
+    # 2️⃣ Determinar status da NF
+    # -------------------------------
     status_notas = {}
-    canceladas = []
     autorizadas = []
+    canceladas = []
 
-    for nf, arquivos in notas_xml.items():
-        if any(is_xml_cancelado(arq) for arq in arquivos):
+    for nf, arquivos in notas_dict.items():
+
+        # Se QUALQUER XML contiver cancelamento → cancelada
+        if any(xml_esta_cancelado(xml_zip.read(a)) for a in arquivos):
             status_notas[nf] = "cancelada"
             canceladas.append(nf)
         else:
             status_notas[nf] = "autorizada"
             autorizadas.append(nf)
 
+    # -------------------------------
+    # 3️⃣ Criar ZIP final
+    # -------------------------------
+    buffer = io.BytesIO()
 
-    # -----------------------------
-    # Criar ZIP final
-    # -----------------------------
-    output_zip_buffer = io.BytesIO()
-
-    with zipfile.ZipFile(output_zip_buffer, "w", zipfile.ZIP_DEFLATED) as new_zip:
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as new_zip:
 
         # XMLs
-        for nf, arquivos in notas_xml.items():
+        for nf, arquivos in notas_dict.items():
             for xml_name in arquivos:
-                xml_bytes = xml_zip.read(xml_name)
-                new_zip.writestr(f"XMLs/{xml_name}", xml_bytes)
+                new_zip.writestr(f"XMLs/{xml_name}", xml_zip.read(xml_name))
 
         # DANFEs
         for name in danfe_zip.namelist():
-            if not name.lower().endswith(".pdf"):
-                continue
-
-            nf_pdf = get_nf_from_filename(name)
-            if nf_pdf in status_notas:
-                new_zip.writestr(f"DANFEs/{name}", danfe_zip.read(name))
+            if name.lower().endswith(".pdf"):
+                nf_pdf = get_nf_from_filename(name)
+                if nf_pdf in status_notas:
+                    new_zip.writestr(f"DANFEs/{name}", danfe_zip.read(name))
 
         # Relatório
         rel = f"Pedido analisado: {pedido_usuario}\n\n"
-        rel += f"Total de notas encontradas: {len(status_notas)}\n"
-        rel += f"Autorizadas: {autorizadas}\n"
-        rel += f"Canceladas: {canceladas}\n"
+        rel += f"Total de notas: {len(status_notas)}\n"
+        rel += f"Notas autorizadas: {autorizadas}\n"
+        rel += f"Notas canceladas: {canceladas}\n"
 
         new_zip.writestr("relatorio.txt", rel)
-
 
     st.success("Processo concluído com sucesso!")
 
     st.download_button(
         label="⬇ Baixar ZIP Final",
-        data=output_zip_buffer.getvalue(),
+        data=buffer.getvalue(),
         file_name=f"pedido_{pedido_usuario}_resultado.zip",
         mime="application/zip"
     )
