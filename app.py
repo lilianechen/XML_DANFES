@@ -52,6 +52,25 @@ def get_nf_from_xml(content):
     return None
 
 
+def get_nf_from_cancelamento(content):
+    """Extrai número da NF do XML de cancelamento (procEventoNFe)."""
+    try:
+        root = ET.fromstring(content)
+        # Tenta buscar chNFe que contém o número da NF
+        chNFe = root.find('.//{*}chNFe')
+        if chNFe is not None:
+            # chNFe tem formato: 42251261081232000106550010000028131346300001
+            # Os dígitos 28-31 são o número da NF
+            nfe_str = chNFe.text.strip()
+            if len(nfe_str) >= 31:
+                nf_part = nfe_str[25:35]  # extrai os dígitos da NF
+                if nf_part.isdigit():
+                    return int(nf_part)
+    except:
+        return None
+    return None
+
+
 def is_cancelado_by_filename(filename):
     """Detecta se o arquivo contém '-cancelamento' no nome."""
     return "-cancelamento" in filename.lower()
@@ -169,7 +188,7 @@ if st.button("🔍 Processar"):
         for name in xml_zip.namelist():
             if "-cancelamento" in name.lower() and name.lower().endswith(".xml"):
                 content = xml_zip.read(name)
-                nf = get_nf_from_xml(content)
+                nf = get_nf_from_cancelamento(content)
                 if nf and nf in notas_xml and nf not in canceladas:
                     status_notas[nf] = "cancelada"
                     canceladas.append(nf)
