@@ -164,6 +164,16 @@ if st.button("🔍 Processar"):
             else:
                 status_notas[nf] = "autorizada"
                 autorizadas.append(nf)
+        
+        # Verificar também arquivos de cancelamento não vinculados
+        for name in xml_zip.namelist():
+            if "-cancelamento" in name.lower() and name.lower().endswith(".xml"):
+                content = xml_zip.read(name)
+                nf = get_nf_from_xml(content)
+                if nf and nf in notas_xml and nf not in canceladas:
+                    status_notas[nf] = "cancelada"
+                    canceladas.append(nf)
+                    autorizadas = [a for a in autorizadas if a != nf]
 
 
     # ---------------------------------------------------------
