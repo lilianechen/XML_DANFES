@@ -60,10 +60,11 @@ def get_nf_from_cancelamento(content):
         chNFe = root.find('.//{*}chNFe')
         if chNFe is not None:
             # chNFe tem formato: 42251261081232000106550010000028131346300001
-            # Os dígitos 20-27 são o número da NF (8 dígitos)
+            # UF(2) + CNPJ(8) + Série(2) + Modelo(2) + NF(8) + emissor(4) + sequencial(8)
+            # Posição: 0-1 UF, 2-9 CNPJ, 10-11 Série, 12-13 Modelo, 14-21 NF
             nfe_str = chNFe.text.strip()
-            if len(nfe_str) >= 28:
-                nf_part = nfe_str[20:28]  # extrai os 8 dígitos da NF
+            if len(nfe_str) >= 29:
+                nf_part = nfe_str[23:31]  # pega 8 dígitos da NF
                 if nf_part.isdigit():
                     return int(nf_part)
     except:
