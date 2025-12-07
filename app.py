@@ -189,15 +189,12 @@ if st.button("🔍 Processar"):
             if "-cancelamento" in name.lower() and name.lower().endswith(".xml"):
                 content = xml_zip.read(name)
                 nf = get_nf_from_cancelamento(content)
-                st.write(f"DEBUG: Arquivo {name} → NF extraída: {nf}")
-                st.write(f"DEBUG: Notas no dict: {list(notas_xml.keys())}")
                 if nf and nf in notas_xml:
                     if nf not in canceladas:
                         status_notas[nf] = "cancelada"
                         canceladas.append(nf)
                         if nf in autorizadas:
                             autorizadas.remove(nf)
-                    st.write(f"DEBUG: NF {nf} marcada como cancelada ✓")
 
 
     # ---------------------------------------------------------
@@ -222,6 +219,10 @@ if st.button("🔍 Processar"):
             if nf_inicio is not None and nf_fim is not None and "Intervalo" in modo:
                 if not (nf_inicio <= nf <= nf_fim):
                     continue
+
+            # NÃO incluir DANFEs de notas canceladas
+            if xml_zip and nf in canceladas:
+                continue
 
             danfes_filtradas.append(name)
 
