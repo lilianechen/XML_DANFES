@@ -108,19 +108,23 @@ modo = st.radio(
     ]
 )
 
-pedido_usuario = None
+pedidos_usuario = []
 nf_inicio = None
 nf_fim = None
 
 if modo == "Filtrar por Pedido":
-    pedido_usuario = st.text_input("Digite o pedido (4 ou 5 dígitos):")
+    pedidos_input = st.text_input("Digite os pedidos separados por vírgula (ex: 7373, 7374, 7375):")
+    if pedidos_input:
+        pedidos_usuario = [p.strip() for p in pedidos_input.split(",")]
 
 elif modo == "Filtrar por Intervalo de NF":
     nf_inicio = st.number_input("NF Inicial:", min_value=0)
     nf_fim = st.number_input("NF Final:", min_value=0)
 
 elif modo == "Filtrar por Pedido + Intervalo":
-    pedido_usuario = st.text_input("Digite o pedido:")
+    pedidos_input = st.text_input("Digite os pedidos separados por vírgula (ex: 7373, 7374, 7375):")
+    if pedidos_input:
+        pedidos_usuario = [p.strip() for p in pedidos_input.split(",")]
     nf_inicio = st.number_input("NF Inicial:", min_value=0)
     nf_fim = st.number_input("NF Final:", min_value=0)
 
