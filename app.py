@@ -11,7 +11,7 @@ st.title("📦 Filtro Inteligente de XML + DANFE por Pedido e Intervalo de NF")
 st.write("""
 Sistema avançado:
 - Upload opcional de XML e/ou DANFE
-- Cancelamento detectado por lógica DEFINITIVA
+- Cancelamento detectado por NOME DO ARQUIVO
 - Filtro por pedido, intervalo ou ambos
 - Geração de ZIP + relatório completo
 """)
@@ -52,39 +52,9 @@ def get_nf_from_xml(content):
     return None
 
 
-def xml_esta_cancelado(content):
-    """Detecta se o XML contém evento de cancelamento."""
-    try:
-        root = ET.fromstring(content)
-
-        # procEventoNFe sempre indica cancelamento
-        if root.find('.//{*}procEventoNFe') is not None:
-            return True
-
-        # tpEvento 110111 = cancelamento
-        tpEvento = root.find('.//{*}tpEvento')
-        if tpEvento is not None and tpEvento.text.strip() == "110111":
-            return True
-
-        # cStat 101 = cancelado
-        cStat = root.find('.//{*}cStat')
-        if cStat is not None and cStat.text.strip() == "101":
-            return True
-
-        # descEvento contendo “cancel”
-        descEvento = root.find('.//{*}descEvento')
-        if descEvento is not None and "cancel" in descEvento.text.lower():
-            return True
-
-        # xMotivo contendo “cancel”
-        xMotivo = root.find('.//{*}xMotivo')
-        if xMotivo is not None and "cancel" in xMotivo.text.lower():
-            return True
-
-    except:
-        return False
-
-    return False
+def is_cancelado_by_filename(filename):
+    """Detecta se o arquivo contém '-cancelamento' no nome."""
+    return "-cancelamento" in filename.lower()
 
 
 def get_nf_from_filename(filename):
@@ -177,23 +147,18 @@ if st.button("🔍 Processar"):
                     continue
 
             xmls_filtrados.append(name)
-            notas_xml.setdefault(nf, []).append(name)
+            notas_xml.setdefault(nf, []).append((name, is_cancelado_by_filename(name)))
 
-        # LÓGICA DEFINITIVA DE CANCELAMENTO
+        # LÓGICA DE CANCELAMENTO POR NOME DO ARQUIVO
         status_notas = {}
         autorizadas = []
         canceladas = []
 
         for nf, lista_arquivos in notas_xml.items():
 
-            if len(lista_arquivos) >= 2:
-                status_notas[nf] = "cancelada"
-                canceladas.append(nf)
-                continue
+            tem_cancelado = any(is_cancel for _, is_cancel in lista_arquivos)
 
-            unico = xml_zip.read(lista_arquivos[0])
-
-            if xml_esta_cancelado(unico):
+            if tem_cancelado:
                 status_notas[nf] = "cancelada"
                 canceladas.append(nf)
             else:
@@ -241,7 +206,7 @@ if st.button("🔍 Processar"):
 
         if danfe_zip:
             for pdf in danfes_filtradas:
-                new_zip.writestr(f"DANFEs_filtradas/{pdf}", danfe_zip.read(pdf))
+                new_zip.writestr(f"DANFEs_filtrados/{pdf}", danfe_zip.read(pdf))
 
         rel = "RELATÓRIO DO PROCESSAMENTO\n\n"
         rel += f"Modo de filtragem: {modo}\n"
