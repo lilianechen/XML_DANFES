@@ -60,10 +60,10 @@ def get_nf_from_cancelamento(content):
         chNFe = root.find('.//{*}chNFe')
         if chNFe is not None:
             # chNFe tem formato: 42251261081232000106550010000028131346300001
-            # A NF está na posição 25-32 (8 dígitos: 00002813)
+            # A NF está na posição 30-34 (4 dígitos: 2813)
             nfe_str = chNFe.text.strip()
-            if len(nfe_str) >= 33:
-                nf_part = nfe_str[25:33]  # pega 8 dígitos da NF
+            if len(nfe_str) >= 34:
+                nf_part = nfe_str[30:34]  # pega 4 dígitos da NF
                 if nf_part.isdigit():
                     return int(nf_part)
     except:
