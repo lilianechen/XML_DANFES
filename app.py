@@ -236,7 +236,12 @@ if st.button("🔍 Processar"):
 
         if xml_zip:
             for xml in xmls_filtrados:
-                new_zip.writestr(f"XMLs_filtrados/{xml}", xml_zip.read(xml))
+                # Extrai NF do XML para verificar se está cancelada
+                content = xml_zip.read(xml)
+                nf = get_nf_from_xml(content)
+                # Só inclui se não estiver cancelada
+                if nf not in canceladas:
+                    new_zip.writestr(f"XMLs_filtrados/{xml}", content)
 
         if danfe_zip:
             for pdf in danfes_filtradas:
