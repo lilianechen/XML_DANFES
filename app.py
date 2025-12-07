@@ -161,7 +161,7 @@ if st.button("🔍 Processar"):
                 continue
 
             # filtro por pedido
-            if pedido_usuario and pedido_xml != pedido_usuario:
+            if len(pedidos_usuario) > 0 and pedido_xml not in pedidos_usuario:
                 continue
 
             # filtro por intervalo
@@ -216,7 +216,7 @@ if st.button("🔍 Processar"):
                 continue
 
             # filtro por pedido (somente se XML foi enviado)
-            if pedido_usuario and xml_zip and nf not in notas_xml:
+            if pedidos_usuario and xml_zip and nf not in notas_xml:
                 continue
 
             # filtro por intervalo
@@ -255,8 +255,8 @@ if st.button("🔍 Processar"):
         rel = "RELATÓRIO DO PROCESSAMENTO\n\n"
         rel += f"Modo de filtragem: {modo}\n"
 
-        if pedido_usuario:
-            rel += f"Pedido filtrado: {pedido_usuario}\n"
+        if pedidos_usuario:
+            rel += f"Pedidos filtrados: {', '.join(pedidos_usuario)}\n"
 
         if nf_inicio is not None and "Intervalo" in modo:
             rel += f"Intervalo de NF: {nf_inicio} até {nf_fim}\n"
