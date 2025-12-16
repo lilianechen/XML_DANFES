@@ -13,6 +13,7 @@ Sistema avançado:
 - Upload opcional de XML e/ou DANFE
 - Cancelamento detectado por NOME DO ARQUIVO
 - Filtro por pedido, intervalo ou ambos
+- Separação automática de Remessa e Venda
 - Geração de ZIP + relatório completo
 """)
 
@@ -52,18 +53,54 @@ def get_nf_from_xml(content):
     return None
 
 
+def get_tipo_nf_from_xml(content):
+    """
+    Identifica se a NF é de Remessa ou Venda.
+    Verifica o campo finNFe:
+    - 1 = NF Normal (Venda)
+    - 2 = NF Complementar (Venda)
+    - 3 = NF de Ajuste (Venda)
+    - 4 = Devolução/Retorno (Remessa)
+    
+    Também verifica CFOP para confirmar:
+    - 6923 = Remessa (mais comum)
+    - 5949, 6949 = Remessa
+    - 5.XXX, 6.XXX (outros) = Venda
+    """
+    try:
+        root = ET.fromstring(content)
+        
+        # Verifica CFOP primeiro (critério mais confiável)
+        cfop = root.find('.//{*}CFOP')
+        if cfop is not None:
+            cfop_value = cfop.text.strip()
+            # CFOPs de remessa: 6923 (mais comum), 5949, 6949, 5923
+            if cfop_value in ['6923', '5923', '5949', '6949']:
+                return "remessa"
+        
+        # Verifica finNFe como segunda checagem
+        fin_nfe = root.find('.//{*}finNFe')
+        if fin_nfe is not None:
+            fin_value = fin_nfe.text.strip()
+            # Se for 4, é devolução/remessa
+            if fin_value == '4':
+                return "remessa"
+        
+        # Se não identificou como remessa, considera venda
+        return "venda"
+    except:
+        return "venda"  # Padrão em caso de erro
+
+
 def get_nf_from_cancelamento(content):
     """Extrai número da NF do XML de cancelamento (procEventoNFe)."""
     try:
         root = ET.fromstring(content)
-        # Tenta buscar chNFe que contém o número da NF
         chNFe = root.find('.//{*}chNFe')
         if chNFe is not None:
-            # chNFe tem formato: 42251261081232000106550010000028131346300001
-            # A NF está na posição 30-34 (4 dígitos: 2813)
             nfe_str = chNFe.text.strip()
             if len(nfe_str) >= 34:
-                nf_part = nfe_str[30:34]  # pega 4 dígitos da NF
+                nf_part = nfe_str[30:34]
                 if nf_part.isdigit():
                     return int(nf_part)
     except:
@@ -140,8 +177,11 @@ if st.button("🔍 Processar"):
         st.stop()
 
     notas_xml = {}
-    xmls_filtrados = []
-    danfes_filtradas = []
+    xmls_venda = []
+    xmls_remessa = []
+    danfes_venda = []
+    danfes_remessa = []
+    tipo_por_nf = {}  # Mapeia NF -> tipo (venda/remessa)
 
     # ---------------------------------------------------------
     # PROCESSAR XMLs (SE EXISTIREM)
@@ -156,6 +196,7 @@ if st.button("🔍 Processar"):
             content = xml_zip.read(name)
             nf = get_nf_from_xml(content)
             pedido_xml = get_pedido_from_xml(content)
+            tipo_nf = get_tipo_nf_from_xml(content)
 
             if nf is None:
                 continue
@@ -169,7 +210,15 @@ if st.button("🔍 Processar"):
                 if not (nf_inicio <= nf <= nf_fim):
                     continue
 
-            xmls_filtrados.append(name)
+            # Armazena o tipo da nota
+            tipo_por_nf[nf] = tipo_nf
+            
+            # Separa por tipo
+            if tipo_nf == "remessa":
+                xmls_remessa.append(name)
+            else:
+                xmls_venda.append(name)
+            
             notas_xml.setdefault(nf, []).append((name, is_cancelado_by_filename(name)))
 
         # LÓGICA DE CANCELAMENTO POR NOME DO ARQUIVO
@@ -228,7 +277,15 @@ if st.button("🔍 Processar"):
             if xml_zip and nf in canceladas:
                 continue
 
-            danfes_filtradas.append(name)
+            # Separa DANFE por tipo (se XML foi processado)
+            if nf in tipo_por_nf:
+                if tipo_por_nf[nf] == "remessa":
+                    danfes_remessa.append(name)
+                else:
+                    danfes_venda.append(name)
+            else:
+                # Se não tem XML, considera como venda por padrão
+                danfes_venda.append(name)
 
 
     # ---------------------------------------------------------
@@ -240,19 +297,34 @@ if st.button("🔍 Processar"):
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as new_zip:
 
         if xml_zip:
-            for xml in xmls_filtrados:
-                # Extrai NF do XML para verificar se está cancelada
+            # XMLs de Venda (não cancelados)
+            for xml in xmls_venda:
                 content = xml_zip.read(xml)
                 nf = get_nf_from_xml(content)
-                # Só inclui se não estiver cancelada
                 if nf not in canceladas:
-                    new_zip.writestr(f"XMLs_filtrados/{xml}", content)
+                    new_zip.writestr(f"XMLs_Venda/{xml}", content)
+            
+            # XMLs de Remessa (não cancelados)
+            for xml in xmls_remessa:
+                content = xml_zip.read(xml)
+                nf = get_nf_from_xml(content)
+                if nf not in canceladas:
+                    new_zip.writestr(f"XMLs_Remessa/{xml}", content)
 
         if danfe_zip:
-            for pdf in danfes_filtradas:
-                new_zip.writestr(f"DANFEs_filtrados/{pdf}", danfe_zip.read(pdf))
+            # DANFEs de Venda
+            for pdf in danfes_venda:
+                new_zip.writestr(f"DANFEs_Venda/{pdf}", danfe_zip.read(pdf))
+            
+            # DANFEs de Remessa
+            for pdf in danfes_remessa:
+                new_zip.writestr(f"DANFEs_Remessa/{pdf}", danfe_zip.read(pdf))
 
-        rel = "RELATÓRIO DO PROCESSAMENTO\n\n"
+        # Relatório detalhado
+        rel = "=" * 60 + "\n"
+        rel += "RELATÓRIO DO PROCESSAMENTO\n"
+        rel += "=" * 60 + "\n\n"
+        
         rel += f"Modo de filtragem: {modo}\n"
 
         if pedidos_usuario:
@@ -261,21 +333,53 @@ if st.button("🔍 Processar"):
         if nf_inicio is not None and "Intervalo" in modo:
             rel += f"Intervalo de NF: {nf_inicio} até {nf_fim}\n"
 
-        rel += "\n"
+        rel += "\n" + "-" * 60 + "\n"
+        rel += "RESUMO GERAL\n"
+        rel += "-" * 60 + "\n"
 
         if xml_zip:
-            rel += f"XMLs filtrados: {len(xmls_filtrados)}\n"
-            rel += f"Notas encontradas: {list(notas_xml.keys())}\n"
-            rel += f"Autorizadas: {autorizadas}\n"
-            rel += f"Canceladas: {canceladas}\n\n"
+            xmls_venda_ok = [x for x in xmls_venda if get_nf_from_xml(xml_zip.read(x)) not in canceladas]
+            xmls_remessa_ok = [x for x in xmls_remessa if get_nf_from_xml(xml_zip.read(x)) not in canceladas]
+            
+            rel += f"Total de XMLs processados: {len(xmls_venda) + len(xmls_remessa)}\n"
+            rel += f"  - XMLs de Venda: {len(xmls_venda_ok)}\n"
+            rel += f"  - XMLs de Remessa: {len(xmls_remessa_ok)}\n"
+            rel += f"\nNotas Autorizadas: {len(autorizadas)}\n"
+            rel += f"Notas Canceladas: {len(canceladas)}\n"
 
         if danfe_zip:
-            rel += f"DANFEs filtradas: {len(danfes_filtradas)}\n"
-            rel += f"Arquivos DANFE: {danfes_filtradas}\n"
+            rel += f"\nTotal de DANFEs processadas: {len(danfes_venda) + len(danfes_remessa)}\n"
+            rel += f"  - DANFEs de Venda: {len(danfes_venda)}\n"
+            rel += f"  - DANFEs de Remessa: {len(danfes_remessa)}\n"
+
+        rel += "\n" + "-" * 60 + "\n"
+        rel += "DETALHAMENTO POR TIPO\n"
+        rel += "-" * 60 + "\n"
+
+        if xml_zip:
+            nfs_venda = sorted([get_nf_from_xml(xml_zip.read(x)) for x in xmls_venda_ok])
+            nfs_remessa = sorted([get_nf_from_xml(xml_zip.read(x)) for x in xmls_remessa_ok])
+            
+            rel += f"\nNotas de VENDA: {nfs_venda}\n"
+            rel += f"Notas de REMESSA: {nfs_remessa}\n"
+            
+            if canceladas:
+                rel += f"\nNotas CANCELADAS (excluídas): {sorted(canceladas)}\n"
 
         new_zip.writestr("relatorio.txt", rel)
 
-    st.success("Processamento concluído!")
+    st.success("✅ Processamento concluído!")
+
+    # Exibe resumo visual
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.metric("XMLs de Venda", len([x for x in xmls_venda if get_nf_from_xml(xml_zip.read(x)) not in canceladas]) if xml_zip else 0)
+        st.metric("DANFEs de Venda", len(danfes_venda))
+    
+    with col2:
+        st.metric("XMLs de Remessa", len([x for x in xmls_remessa if get_nf_from_xml(xml_zip.read(x)) not in canceladas]) if xml_zip else 0)
+        st.metric("DANFEs de Remessa", len(danfes_remessa))
 
     st.download_button(
         "⬇ Baixar ZIP Final",
@@ -284,4 +388,5 @@ if st.button("🔍 Processar"):
         mime="application/zip"
     )
 
-    st.code(rel)
+    with st.expander("📋 Ver Relatório Completo"):
+        st.code(rel)
